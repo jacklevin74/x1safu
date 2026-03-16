@@ -19,13 +19,15 @@ export function Connect() {
   const isConnected = connected || !!bpKey
   const activeKey   = publicKey?.toString() || bpKey
 
-  // Priority: Phantom first, then Backpack, then Solflare
+  // Priority: Backpack first, then Phantom, then Solflare
   const detectProvider = () => {
     if (typeof window === 'undefined') return null
-    if (window.phantom?.solana)         return 'phantom'
-    if (window.solana?.isPhantom)       return 'phantom-legacy'
+    // Backpack mobile app injects window.backpack
     if (window.backpack)                return 'backpack'
     if (window.xnft?.solana)            return 'xnft'
+    // Phantom fallback
+    if (window.phantom?.solana)         return 'phantom'
+    if (window.solana?.isPhantom)       return 'phantom-legacy'
     const sf = wallets.find(x => x.adapter.name === 'Solflare')
     if (sf) return 'solflare'
     return null
@@ -36,29 +38,30 @@ export function Connect() {
     setError(null)
     try {
       const provider = detectProvider()
-      if (provider === 'phantom') {
+      if (provider === 'backpack') {
+        // Backpack mobile: try solana sub-object first, then root
+        const p = window.backpack?.solana ?? window.backpack
+        const resp = await p.connect()
+        const key = resp?.publicKey?.toString() ?? p.publicKey?.toString()
+        setBpKey(key)
+      } else if (provider === 'xnft') {
+        const p = window.xnft.solana
+        const resp = await p.connect()
+        setBpKey(resp?.publicKey?.toString() ?? p.publicKey?.toString())
+      } else if (provider === 'phantom') {
         const p = window.phantom!.solana
         const resp = await p.connect()
         setBpKey(resp?.publicKey?.toString())
       } else if (provider === 'phantom-legacy') {
-        const p = window.solana
-        const resp = await p.connect()
+        const resp = await window.solana.connect()
         setBpKey(resp?.publicKey?.toString())
-      } else if (provider === 'backpack') {
-        const p = window.backpack?.solana || window.backpack
-        const resp = await p.connect()
-        setBpKey(resp?.publicKey?.toString() || p.publicKey?.toString())
-      } else if (provider === 'xnft') {
-        const p = window.xnft.solana
-        const resp = await p.connect()
-        setBpKey(resp?.publicKey?.toString() || p.publicKey?.toString())
       } else if (provider === 'solflare') {
         const w = wallets.find(x => x.adapter.name === 'Solflare')!
         select(w.adapter.name as any)
         await new Promise(r => setTimeout(r, 300))
         await connect()
       } else {
-        throw new Error('No wallet detected. Please open inside Phantom or Backpack app.')
+        throw new Error('No wallet detected. Please open inside Backpack app.')
       }
     } catch (e: any) {
       setError(e?.message || 'Connection failed')
@@ -70,7 +73,7 @@ export function Connect() {
   const disconnectAll = useCallback(async () => {
     try {
       if (bpKey) {
-        const p = window.phantom?.solana || window.solana || window.backpack?.solana || window.backpack || window.xnft?.solana
+        const p = window.backpack?.solana ?? window.backpack ?? window.xnft?.solana ?? window.phantom?.solana ?? window.solana
         if (p?.disconnect) await p.disconnect()
         setBpKey(null)
       }
@@ -94,10 +97,10 @@ export function Connect() {
 
   return (
     <div className="card" style={{ maxWidth: 420, margin: '40px auto', textAlign: 'center' }}>
-      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🔐</div>
+      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🎒</div>
       <div style={{ fontWeight: 700, fontSize: '1.2rem', marginBottom: 6 }}>X1SAFE</div>
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 28 }}>
-        Connect your wallet to access the vault
+        Connect your Backpack wallet to access the vault
       </div>
       <button
         className="btn btn-primary btn-full"
@@ -105,13 +108,13 @@ export function Connect() {
         onClick={connectWallet}
         disabled={loading}
       >
-        {loading ? <span className="loading" /> : '🔗 Connect Wallet'}
+        {loading ? <span className="loading" /> : '🎒 Connect Backpack'}
       </button>
       {error && (
         <div className="tx-status error" style={{ marginTop: 12, textAlign: 'left' }}>❌ {error}</div>
       )}
       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 16 }}>
-        Supports Phantom · Backpack · Solflare
+        Supports Backpack · Phantom · Solflare
       </div>
     </div>
   )
