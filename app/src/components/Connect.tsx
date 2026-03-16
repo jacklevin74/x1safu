@@ -12,6 +12,8 @@ declare global {
 
 type WalletOption = 'backpack' | 'phantom' | 'solflare'
 
+const SITE_URL = 'https://x1safe-ui.vercel.app'
+
 export function Connect() {
   const { wallets, select, connect, connected, publicKey, disconnect } = useWallet()
   const [error, setError]     = useState<string | null>(null)
@@ -21,12 +23,24 @@ export function Connect() {
   const isConnected = connected || !!bpKey
   const activeKey   = publicKey?.toString() || bpKey
 
+  const hasBackpack = typeof window !== 'undefined' && !!(window.backpack || window.xnft?.solana)
+  const hasPhantom  = typeof window !== 'undefined' && !!(window.phantom?.solana || window.solana?.isPhantom)
+
+  const openInBackpack = useCallback(() => {
+    // Backpack deeplink: opens the dApp browser inside Backpack app
+    const encoded = encodeURIComponent(SITE_URL)
+    window.location.href = `https://backpack.app/ul/v1/browse/${encoded}`
+  }, [])
+
   const connectBackpack = useCallback(async () => {
+    if (!hasBackpack) {
+      openInBackpack()
+      return
+    }
     setLoading('backpack')
     setError(null)
     try {
       const p = window.backpack?.solana ?? window.backpack ?? window.xnft?.solana
-      if (!p) throw new Error('Backpack not detected. Please open inside the Backpack app.')
       const resp = await p.connect()
       const key = resp?.publicKey?.toString() ?? p.publicKey?.toString()
       if (!key) throw new Error('Could not get public key from Backpack')
@@ -36,14 +50,14 @@ export function Connect() {
     } finally {
       setLoading(null)
     }
-  }, [])
+  }, [hasBackpack, openInBackpack])
 
   const connectPhantom = useCallback(async () => {
     setLoading('phantom')
     setError(null)
     try {
       const p = window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null)
-      if (!p) throw new Error('Phantom not detected. Please install Phantom wallet.')
+      if (!p) throw new Error('Phantom not detected.')
       const resp = await p.connect()
       const key = resp?.publicKey?.toString()
       if (!key) throw new Error('Could not get public key from Phantom')
@@ -60,7 +74,7 @@ export function Connect() {
     setError(null)
     try {
       const w = wallets.find(x => x.adapter.name === 'Solflare')
-      if (!w) throw new Error('Solflare not detected. Please install Solflare wallet.')
+      if (!w) throw new Error('Solflare not detected.')
       select(w.adapter.name as any)
       await new Promise(r => setTimeout(r, 300))
       await connect()
@@ -82,9 +96,6 @@ export function Connect() {
       setError(null)
     } catch {}
   }, [bpKey, connected, disconnect])
-
-  const hasBackpack = typeof window !== 'undefined' && (window.backpack || window.xnft?.solana)
-  const hasPhantom  = typeof window !== 'undefined' && (window.phantom?.solana || window.solana?.isPhantom)
 
   if (isConnected) {
     return (
@@ -122,7 +133,7 @@ export function Connect() {
             ? <span className="loading" />
             : hasBackpack
               ? <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600 }}>Detected</span>
-              : <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Open in app</span>
+              : <span style={{ fontSize: '0.72rem', color: '#f59e0b', fontWeight: 600 }}>Open in app →</span>
           }
         </button>
 
@@ -152,13 +163,17 @@ export function Connect() {
         >
           <span style={{ fontSize: '1.4rem' }}>🌟</span>
           <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Solflare</span>
-          {loading === 'solflare'
-            ? <span className="loading" />
-            : <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Extension</span>
-          }
+          {loading === 'solflare' ? <span className="loading" /> : <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Extension</span>}
         </button>
 
       </div>
+
+      {/* Backpack hint when not inside app */}
+      {!hasBackpack && (
+        <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'left' }}>
+          💡 <strong>Tip:</strong> Nhấn <strong>🎒 Backpack</strong> để mở trang này bên trong Backpack app và kết nối ví.
+        </div>
+      )}
 
       {error && (
         <div className="tx-status error" style={{ marginTop: 14, textAlign: 'left' }}>❌ {error}</div>
