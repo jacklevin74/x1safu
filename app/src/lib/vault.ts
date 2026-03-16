@@ -17,7 +17,7 @@ export const EXPLORER   = IS_TESTNET
 
 // ── X1SAFE Token Rate ─────────────────────────────────────────────────────────
 // 1 USD = 100 X1SAFE  →  1 X1SAFE = $0.01
-export const X1SAFE_PER_USD = 100
+export const X1SAFE_PER_USD = 1
 
 // ── Supported Assets ─────────────────────────────────────────────────────────
 // NOTE: Mints below are testnet mints; prices fetched from X1 Mainnet pool data
