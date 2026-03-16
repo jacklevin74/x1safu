@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ConnectionProvider,
   WalletProvider,
@@ -6,7 +6,6 @@ import {
 } from '@solana/wallet-adapter-react'
 import {
   WalletModalProvider,
-  WalletMultiButton,
 } from '@solana/wallet-adapter-react-ui'
 import {
   PhantomWalletAdapter,
@@ -20,86 +19,28 @@ import { Dashboard } from './components/Dashboard'
 import { Deposit }   from './components/Deposit'
 import { Withdraw }  from './components/Withdraw'
 import { Exit }      from './components/Exit'
+import { Connect }   from './components/Connect'
 import { RPC_URL }   from './lib/vault'
 
 declare global {
-  interface Window {
-    backpack?: any
-    xnft?: any
-    phantom?: any
-  }
+  interface Window { backpack?: any; xnft?: any }
 }
 
-type Tab = 'dashboard' | 'deposit' | 'withdraw' | 'exit'
-
-function ConnectSection() {
-  const { connected, publicKey, disconnect } = useWallet()
-  const [backpackPubkey, setBackpackPubkey] = useState<string | null>(null)
-  const [backpackConnecting, setBackpackConnecting] = useState(false)
-  const hasBackpack = typeof window !== 'undefined' && (window.backpack || window.xnft)
-
-  const connectBackpack = useCallback(async () => {
-    try {
-      setBackpackConnecting(true)
-      const provider = window.backpack || window.xnft?.solana
-      if (!provider) return
-      const resp = await provider.connect()
-      setBackpackPubkey(resp.publicKey.toString())
-    } catch (e) {
-      console.error('Backpack connect error', e)
-    } finally {
-      setBackpackConnecting(false)
-    }
-  }, [])
-
-  const disconnectBackpack = useCallback(async () => {
-    try {
-      const provider = window.backpack || window.xnft?.solana
-      if (provider) await provider.disconnect()
-      setBackpackPubkey(null)
-    } catch {}
-  }, [])
-
-  // If WalletAdapter already connected (Phantom/Solflare)
-  if (connected && publicKey) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <WalletMultiButton />
-      </div>
-    )
-  }
-
-  // If Backpack connected directly
-  if (backpackPubkey) {
-    const short = `${backpackPubkey.slice(0,4)}…${backpackPubkey.slice(-4)}`
-    return (
-      <button className="btn btn-secondary" onClick={disconnectBackpack} style={{ fontSize: '0.85rem', padding: '8px 14px' }}>
-        🎒 {short} · Disconnect
-      </button>
-    )
-  }
-
-  return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <WalletMultiButton />
-      {hasBackpack && (
-        <button
-          className="btn btn-secondary"
-          style={{ padding: '8px 14px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
-          onClick={connectBackpack}
-          disabled={backpackConnecting}
-        >
-          {backpackConnecting ? <span className="loading" /> : '🎒 Backpack'}
-        </button>
-      )}
-    </div>
-  )
-}
+type Tab = 'connect' | 'dashboard' | 'deposit' | 'withdraw' | 'exit'
 
 function App() {
-  const [tab, setTab] = useState<Tab>('dashboard')
+  const { connected } = useWallet()
+
+  // detect Backpack mobile/desktop direct inject
+  const bpConnected = typeof window !== 'undefined' &&
+    (window.backpack?.publicKey || window.xnft?.solana?.publicKey)
+
+  const isWalletConnected = connected || !!bpConnected
+
+  const [tab, setTab] = useState<Tab>('connect')
 
   const tabs: { key: Tab; label: string; icon: string }[] = [
+    { key: 'connect',   label: 'Connect',   icon: '🔗' },
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
     { key: 'deposit',   label: 'Deposit',   icon: '⬇️' },
     { key: 'withdraw',  label: 'Withdraw',  icon: '🔄' },
@@ -117,7 +58,9 @@ function App() {
               <div className="brand-sub">Multi-Asset Vault</div>
             </div>
           </div>
-          <ConnectSection />
+          {isWalletConnected && (
+            <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600 }}>● Connected</span>
+          )}
         </div>
       </header>
 
@@ -134,6 +77,7 @@ function App() {
       </nav>
 
       <main className="app-main">
+        {tab === 'connect'   && <Connect />}
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'deposit'   && <Deposit />}
         {tab === 'withdraw'  && <Withdraw />}
@@ -153,7 +97,7 @@ export default function AppWithWallet() {
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect={false}>
         <WalletModalProvider>
           <App />
         </WalletModalProvider>
