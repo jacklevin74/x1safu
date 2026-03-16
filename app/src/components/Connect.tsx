@@ -19,12 +19,13 @@ export function Connect() {
   const isConnected = connected || !!bpKey
   const activeKey   = publicKey?.toString() || bpKey
 
+  // Priority: Phantom first, then Backpack, then Solflare
   const detectProvider = () => {
     if (typeof window === 'undefined') return null
-    if (window.backpack)                return 'backpack'
-    if (window.xnft?.solana)            return 'xnft'
     if (window.phantom?.solana)         return 'phantom'
     if (window.solana?.isPhantom)       return 'phantom-legacy'
+    if (window.backpack)                return 'backpack'
+    if (window.xnft?.solana)            return 'xnft'
     const sf = wallets.find(x => x.adapter.name === 'Solflare')
     if (sf) return 'solflare'
     return null
@@ -35,7 +36,15 @@ export function Connect() {
     setError(null)
     try {
       const provider = detectProvider()
-      if (provider === 'backpack') {
+      if (provider === 'phantom') {
+        const p = window.phantom!.solana
+        const resp = await p.connect()
+        setBpKey(resp?.publicKey?.toString())
+      } else if (provider === 'phantom-legacy') {
+        const p = window.solana
+        const resp = await p.connect()
+        setBpKey(resp?.publicKey?.toString())
+      } else if (provider === 'backpack') {
         const p = window.backpack?.solana || window.backpack
         const resp = await p.connect()
         setBpKey(resp?.publicKey?.toString() || p.publicKey?.toString())
@@ -43,17 +52,13 @@ export function Connect() {
         const p = window.xnft.solana
         const resp = await p.connect()
         setBpKey(resp?.publicKey?.toString() || p.publicKey?.toString())
-      } else if (provider === 'phantom' || provider === 'phantom-legacy') {
-        const p = window.phantom?.solana || window.solana
-        const resp = await p.connect()
-        setBpKey(resp?.publicKey?.toString())
       } else if (provider === 'solflare') {
         const w = wallets.find(x => x.adapter.name === 'Solflare')!
         select(w.adapter.name as any)
         await new Promise(r => setTimeout(r, 300))
         await connect()
       } else {
-        throw new Error('No wallet detected. Please open inside Backpack app or install a wallet extension.')
+        throw new Error('No wallet detected. Please open inside Phantom or Backpack app.')
       }
     } catch (e: any) {
       setError(e?.message || 'Connection failed')
@@ -65,7 +70,7 @@ export function Connect() {
   const disconnectAll = useCallback(async () => {
     try {
       if (bpKey) {
-        const p = window.backpack?.solana || window.backpack || window.xnft?.solana || window.phantom?.solana || window.solana
+        const p = window.phantom?.solana || window.solana || window.backpack?.solana || window.backpack || window.xnft?.solana
         if (p?.disconnect) await p.disconnect()
         setBpKey(null)
       }
@@ -106,7 +111,7 @@ export function Connect() {
         <div className="tx-status error" style={{ marginTop: 12, textAlign: 'left' }}>❌ {error}</div>
       )}
       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 16 }}>
-        Supports Backpack · Phantom · Solflare
+        Supports Phantom · Backpack · Solflare
       </div>
     </div>
   )
