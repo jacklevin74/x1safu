@@ -1,182 +1,177 @@
-import { useState, useCallback } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
-
-declare global {
-  interface Window {
-    backpack?: any
-    xnft?: any
-    solana?: any
-    phantom?: any
-  }
-}
-
-type WalletOption = 'backpack' | 'phantom' | 'solflare'
+import { useState, useCallback, useEffect } from 'react'
+import { useWallet }                        from '@solana/wallet-adapter-react'
+import { WalletReadyState }                 from '@solana/wallet-adapter-base'
 
 const SITE_URL = 'https://x1safe-ui.vercel.app'
 
+// Wallet definitions with deeplinks for mobile
+const WALLET_DEFS = [
+  {
+    name:     'Backpack',
+    adapterName: 'Backpack',
+    icon:     '🎒',
+    deeplink: `https://backpack.app/ul/v1/browse/${encodeURIComponent(SITE_URL)}`,
+    install:  'https://backpack.app',
+    hint:     'Best for X1 / Solana mobile',
+  },
+  {
+    name:     'Phantom',
+    adapterName: 'Phantom',
+    icon:     '👻',
+    deeplink: `https://phantom.app/ul/browse/${encodeURIComponent(SITE_URL)}?ref=${encodeURIComponent(SITE_URL)}`,
+    install:  'https://phantom.app',
+    hint:     'Popular Solana wallet',
+  },
+  {
+    name:     'Solflare',
+    adapterName: 'Solflare',
+    icon:     '🌟',
+    deeplink: `https://solflare.com/ul/v1/browse/${encodeURIComponent(SITE_URL)}?ref=${encodeURIComponent(SITE_URL)}`,
+    install:  'https://solflare.com',
+    hint:     'Desktop & mobile',
+  },
+]
+
 export function Connect() {
-  const { wallets, select, connect, connected, publicKey, disconnect } = useWallet()
-  const [error, setError]     = useState<string | null>(null)
-  const [bpKey, setBpKey]     = useState<string | null>(null)
-  const [loading, setLoading] = useState<WalletOption | null>(null)
+  const { wallets, select, connect, disconnect, connected, connecting, publicKey } = useWallet()
+  const [error,   setError]   = useState<string | null>(null)
+  const [loading, setLoading] = useState<string | null>(null)
 
-  const isConnected = connected || !!bpKey
-  const activeKey   = publicKey?.toString() || bpKey
+  // Auto-clear error after 6s
+  useEffect(() => {
+    if (!error) return
+    const t = setTimeout(() => setError(null), 6000)
+    return () => clearTimeout(t)
+  }, [error])
 
-  const hasBackpack = typeof window !== 'undefined' && !!(window.backpack || window.xnft?.solana)
-  const hasPhantom  = typeof window !== 'undefined' && !!(window.phantom?.solana || window.solana?.isPhantom)
-
-  const openInBackpack = useCallback(() => {
-    // Backpack deeplink: opens the dApp browser inside Backpack app
-    const encoded = encodeURIComponent(SITE_URL)
-    window.location.href = `https://backpack.app/ul/v1/browse/${encoded}`
-  }, [])
-
-  const connectBackpack = useCallback(async () => {
-    if (!hasBackpack) {
-      openInBackpack()
-      return
-    }
-    setLoading('backpack')
+  const handleConnect = useCallback(async (def: typeof WALLET_DEFS[0]) => {
     setError(null)
+    setLoading(def.name)
     try {
-      const p = window.backpack?.solana ?? window.backpack ?? window.xnft?.solana
-      const resp = await p.connect()
-      const key = resp?.publicKey?.toString() ?? p.publicKey?.toString()
-      if (!key) throw new Error('Could not get public key from Backpack')
-      setBpKey(key)
-    } catch (e: any) {
-      setError(e?.message || 'Backpack connection failed')
-    } finally {
-      setLoading(null)
-    }
-  }, [hasBackpack, openInBackpack])
+      // Find matching adapter
+      const adapter = wallets.find(w =>
+        w.adapter.name.toLowerCase() === def.adapterName.toLowerCase()
+      )
 
-  const connectPhantom = useCallback(async () => {
-    setLoading('phantom')
-    setError(null)
-    try {
-      const p = window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : null)
-      if (!p) throw new Error('Phantom not detected.')
-      const resp = await p.connect()
-      const key = resp?.publicKey?.toString()
-      if (!key) throw new Error('Could not get public key from Phantom')
-      setBpKey(key)
-    } catch (e: any) {
-      setError(e?.message || 'Phantom connection failed')
-    } finally {
-      setLoading(null)
-    }
-  }, [])
+      const state = adapter?.readyState
 
-  const connectSolflare = useCallback(async () => {
-    setLoading('solflare')
-    setError(null)
-    try {
-      const w = wallets.find(x => x.adapter.name === 'Solflare')
-      if (!w) throw new Error('Solflare not detected.')
-      select(w.adapter.name as any)
-      await new Promise(r => setTimeout(r, 300))
+      // Not installed / not in browser → try deeplink (mobile)
+      if (!adapter || state === WalletReadyState.NotDetected || state === WalletReadyState.Unsupported) {
+        // On mobile: try deeplink first
+        const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent)
+        if (isMobile) {
+          window.location.href = def.deeplink
+          return
+        }
+        // On desktop: open install page
+        window.open(def.install, '_blank')
+        setError(`${def.name} not detected. Install it and refresh.`)
+        return
+      }
+
+      // Adapter found and ready
+      select(def.adapterName as any)
+      await new Promise(r => setTimeout(r, 150)) // let adapter settle
       await connect()
     } catch (e: any) {
-      setError(e?.message || 'Solflare connection failed')
+      const msg = e?.message || `${def.name} connection failed`
+      // User reject is not an error we need to show loudly
+      if (!msg.toLowerCase().includes('user rejected')) {
+        setError(msg)
+      }
     } finally {
       setLoading(null)
     }
   }, [wallets, select, connect])
 
-  const disconnectAll = useCallback(async () => {
-    try {
-      if (bpKey) {
-        const p = window.backpack?.solana ?? window.backpack ?? window.xnft?.solana ?? window.phantom?.solana ?? window.solana
-        if (p?.disconnect) await p.disconnect()
-        setBpKey(null)
-      }
-      if (connected) await disconnect()
-      setError(null)
-    } catch {}
-  }, [bpKey, connected, disconnect])
+  const handleDisconnect = useCallback(async () => {
+    try { await disconnect() } catch {}
+    setError(null)
+  }, [disconnect])
 
-  if (isConnected) {
+  // ── Connected state ────────────────────────────────────────────────────────
+  if (connected && publicKey) {
     return (
-      <div className="card" style={{ maxWidth: 420, margin: '40px auto', textAlign: 'center' }}>
-        <div style={{ fontSize: '3rem', marginBottom: 12 }}>✅</div>
-        <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 8 }}>Wallet Connected</div>
-        <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', wordBreak: 'break-all', background: 'var(--bg-secondary)', padding: '8px 12px', borderRadius: 8, marginBottom: 20 }}>
-          {activeKey}
+      <div className="card" style={{ maxWidth: 440, margin: '40px auto', textAlign: 'center' }}>
+        <div style={{ fontSize: '3rem', marginBottom: 10 }}>✅</div>
+        <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 6 }}>Wallet Connected</div>
+        <div style={{
+          fontFamily: 'monospace', fontSize: '0.78rem',
+          color: 'var(--text-secondary)', wordBreak: 'break-all',
+          background: 'var(--bg-secondary)', padding: '8px 12px',
+          borderRadius: 8, marginBottom: 20,
+        }}>
+          {publicKey.toString()}
         </div>
-        <button className="btn btn-secondary" onClick={disconnectAll}>Disconnect</button>
+        <button className="btn btn-secondary" onClick={handleDisconnect}>
+          Disconnect
+        </button>
       </div>
     )
   }
 
+  // ── Wallet picker ──────────────────────────────────────────────────────────
   return (
-    <div className="card" style={{ maxWidth: 420, margin: '40px auto', textAlign: 'center' }}>
+    <div className="card" style={{ maxWidth: 440, margin: '40px auto', textAlign: 'center' }}>
       <div style={{ fontSize: '3rem', marginBottom: 8 }}>🔐</div>
-      <div style={{ fontWeight: 700, fontSize: '1.2rem', marginBottom: 4 }}>X1SAFE</div>
-      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 24 }}>
-        Choose your wallet to connect
+      <div style={{ fontWeight: 700, fontSize: '1.25rem', marginBottom: 4 }}>X1SAFE</div>
+      <div style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: 24 }}>
+        Connect your wallet to continue
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {WALLET_DEFS.map(def => {
+          const adapter   = wallets.find(w => w.adapter.name.toLowerCase() === def.adapterName.toLowerCase())
+          const isReady   = adapter?.readyState === WalletReadyState.Installed ||
+                            adapter?.readyState === WalletReadyState.Loadable
+          const isLoading = loading === def.name || (connecting && loading === def.name)
 
-        {/* Backpack */}
-        <button
-          className="btn btn-secondary btn-full"
-          style={{ justifyContent: 'flex-start', gap: 12, padding: '12px 16px' }}
-          onClick={connectBackpack}
-          disabled={loading !== null}
-        >
-          <span style={{ fontSize: '1.4rem' }}>🎒</span>
-          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Backpack</span>
-          {loading === 'backpack'
-            ? <span className="loading" />
-            : hasBackpack
-              ? <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600 }}>Detected</span>
-              : <span style={{ fontSize: '0.72rem', color: '#f59e0b', fontWeight: 600 }}>Open in app →</span>
-          }
-        </button>
+          return (
+            <button
+              key={def.name}
+              className="btn btn-secondary btn-full"
+              style={{ justifyContent: 'flex-start', gap: 12, padding: '13px 16px' }}
+              onClick={() => handleConnect(def)}
+              disabled={loading !== null || connecting}
+            >
+              <span style={{ fontSize: '1.5rem' }}>{def.icon}</span>
 
-        {/* Phantom */}
-        <button
-          className="btn btn-secondary btn-full"
-          style={{ justifyContent: 'flex-start', gap: 12, padding: '12px 16px' }}
-          onClick={connectPhantom}
-          disabled={loading !== null}
-        >
-          <span style={{ fontSize: '1.4rem' }}>👻</span>
-          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Phantom</span>
-          {loading === 'phantom'
-            ? <span className="loading" />
-            : hasPhantom
-              ? <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600 }}>Detected</span>
-              : <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Not detected</span>
-          }
-        </button>
+              <span style={{ flex: 1, textAlign: 'left' }}>
+                <span style={{ fontWeight: 700, display: 'block' }}>{def.name}</span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{def.hint}</span>
+              </span>
 
-        {/* Solflare */}
-        <button
-          className="btn btn-secondary btn-full"
-          style={{ justifyContent: 'flex-start', gap: 12, padding: '12px 16px' }}
-          onClick={connectSolflare}
-          disabled={loading !== null}
-        >
-          <span style={{ fontSize: '1.4rem' }}>🌟</span>
-          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Solflare</span>
-          {loading === 'solflare' ? <span className="loading" /> : <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Extension</span>}
-        </button>
-
+              {isLoading ? (
+                <span className="loading" />
+              ) : isReady ? (
+                <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 700 }}>
+                  Detected ✓
+                </span>
+              ) : (
+                <span style={{ fontSize: '0.72rem', color: '#f59e0b', fontWeight: 600 }}>
+                  {/iPhone|iPad|Android/i.test(navigator.userAgent) ? 'Open app →' : 'Install →'}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
-      {/* Backpack hint when not inside app */}
-      {!hasBackpack && (
-        <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'left' }}>
-          💡 <strong>Tip:</strong> Nhấn <strong>🎒 Backpack</strong> để mở trang này bên trong Backpack app và kết nối ví.
+      {/* Mobile deeplink tip */}
+      {/iPhone|iPad|Android/i.test(navigator.userAgent) && (
+        <div style={{
+          marginTop: 16, padding: '10px 14px',
+          background: 'var(--bg-secondary)', borderRadius: 8,
+          fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'left',
+        }}>
+          📱 <strong>Mobile:</strong> Nhấn <strong>🎒 Backpack</strong> → trang mở trong app → kết nối ví.
         </div>
       )}
 
       {error && (
-        <div className="tx-status error" style={{ marginTop: 14, textAlign: 'left' }}>❌ {error}</div>
+        <div className="tx-status error" style={{ marginTop: 14, textAlign: 'left' }}>
+          ❌ {error}
+        </div>
       )}
     </div>
   )
