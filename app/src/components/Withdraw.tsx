@@ -1,171 +1,166 @@
 import { useState, useEffect } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
-
-interface UserPosition {
-  x1safe_balance: number
-  exit_rights: boolean
-}
+import { useConnection, useWallet, useAnchorWallet } from '@solana/wallet-adapter-react'
+import { AnchorProvider } from '@coral-xyz/anchor'
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } from '@solana/spl-token'
+import { Transaction } from '@solana/web3.js'
+import {
+  EXPLORER, IS_TESTNET,
+  getProgram, getPutMintPDA, getSafeMintPDA,
+  getTokenBalance, toBaseUnits
+} from '../lib/vault'
 
 export function Withdraw() {
+  const { connection } = useConnection()
   const wallet = useWallet()
+  const anchorWallet = useAnchorWallet()
+
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
-  const [position, setPosition] = useState<UserPosition | null>(null)
   const [txSig, setTxSig] = useState('')
+  const [error, setError] = useState('')
+  const [putBalance, setPutBalance] = useState(0)
   const [showConfirm, setShowConfirm] = useState(false)
 
+  const putMint = getPutMintPDA()
+  const safeMint = getSafeMintPDA()
+
   useEffect(() => {
-    if (wallet.connected) {
-      setPosition({
-        x1safe_balance: 5000,
-        exit_rights: true
-      })
-    }
-  }, [wallet.connected])
+    if (!wallet.publicKey) return
+    getTokenBalance(connection, wallet.publicKey, putMint).then(setPutBalance)
+  }, [wallet.publicKey, connection, txSig])
 
   const handleWithdraw = async () => {
-    if (!wallet.publicKey || !amount) return
-    
+    if (!wallet.publicKey || !anchorWallet || !amount) return
     setLoading(true)
+    setError('')
+    setTxSig('')
+
     try {
-      await new Promise(r => setTimeout(r, 2000))
-      const mockSig = 'withdraw_' + Math.random().toString(36).substring(7)
-      setTxSig(mockSig)
-      if (position) {
-        setPosition({
-          ...position,
-          exit_rights: false
-        })
+      const provider = new AnchorProvider(connection, anchorWallet, { commitment: 'confirmed' })
+      const program = getProgram(provider)
+
+      const ownerPutAta  = await getAssociatedTokenAddress(putMint, wallet.publicKey)
+      const ownerSafeAta = await getAssociatedTokenAddress(safeMint, wallet.publicKey)
+
+      // Pre-create safeAta if needed
+      try { await getAccount(connection, ownerSafeAta) } catch {
+        const preTx = new Transaction()
+        preTx.add(createAssociatedTokenAccountInstruction(wallet.publicKey, ownerSafeAta, wallet.publicKey, safeMint))
+        preTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+        preTx.feePayer = wallet.publicKey
+        const signed = await wallet.signTransaction!(preTx)
+        await connection.sendRawTransaction(signed.serialize())
+        await new Promise(r => setTimeout(r, 2000))
       }
-    } catch (error) {
-      console.error('Withdraw error:', error)
+
+      const amountBN = toBaseUnits(parseFloat(amount), 6)
+      const tx = await program.methods
+        .withdraw(amountBN)
+        .accounts({
+          owner: wallet.publicKey,
+          ownerPutAta,
+          ownerSafeAta,
+        })
+        .rpc()
+
+      setTxSig(tx)
+      setAmount('')
+      setShowConfirm(false)
+    } catch (e: any) {
+      setError(e?.message || 'Transaction failed')
     } finally {
       setLoading(false)
-      setShowConfirm(false)
     }
   }
 
-  const maxAmount = position?.x1safe_balance || 0
-
   return (
     <div className="withdraw">
-      <style>{`
-        .withdraw { animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
-
       <div className="card">
         <div className="card-header">
           <div>
-            <div className="card-title">Withdraw X1SAFE</div>
-            <div className="card-subtitle">Move tokens to your wallet</div>
+            <div className="card-title">Withdraw X1SAFE_PUT → X1SAFE</div>
+            <div className="card-subtitle">Convert locked PUT tokens to free tradeable X1SAFE</div>
           </div>
         </div>
 
         <div className="info-box warning">
-          <div className="info-box-title">⚠️ Important</div>
+          <div className="info-box-title">⚠️ Note</div>
           <div className="info-box-text">
-            Withdrawing X1SAFE to your wallet will <strong>forfeit your exit rights</strong>.
-            <br /><br />
-            Once withdrawn, you can still sell on xDEX but cannot exit for the original deposit.
+            Converting PUT → X1SAFE gives you a free, tradeable token.
+            Collateral stays in vault. Use <strong>Exit</strong> to redeem collateral.
           </div>
         </div>
 
-        {position ? (
+        {wallet.connected ? (
           <>
             <div className="position-card">
-              <div className="position-header">
-                <span className="position-title">Current Position</span>
-                <span className={`position-badge ${position.exit_rights ? 'active' : 'inactive'}`}>
-                  {position.exit_rights ? '✅ Has Exit Rights' : '❌ No Exit Rights'}
-                </span>
-              </div>
-              
               <div className="position-row">
-                <span className="position-label">X1SAFE Balance</span>
-                <span className="position-value">{position.x1safe_balance.toLocaleString()} X1SAFE</span>
+                <span className="position-label">X1SAFE_PUT Balance</span>
+                <span className="position-value">{putBalance.toFixed(4)} PUT</span>
               </div>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Amount to Withdraw</label>
-              <input
-                type="number"
-                className="form-input"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                max={maxAmount}
-              />
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                <span>Available: {maxAmount.toLocaleString()} X1SAFE</span>
-                <button 
-                  style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer' }}
-                  onClick={() => setAmount(maxAmount.toString())}
-                >
-                  MAX
-                </button>
+              <label className="form-label">Amount to Convert</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  max={putBalance}
+                />
+                <button
+                  style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.85rem' }}
+                  onClick={() => setAmount(putBalance.toFixed(6))}
+                >MAX</button>
+              </div>
+              <div style={{ marginTop: '6px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Available: {putBalance.toFixed(4)} X1SAFE_PUT
               </div>
             </div>
+
+            {error && <div className="tx-status error">❌ {error}</div>}
 
             {!showConfirm ? (
               <button
                 className="btn btn-secondary btn-full"
                 onClick={() => setShowConfirm(true)}
-                disabled={!amount || parseFloat(amount) <= 0 || parseFloat(amount) > maxAmount}
+                disabled={!amount || parseFloat(amount) <= 0 || parseFloat(amount) > putBalance}
               >
                 Continue
               </button>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div className="info-box danger">
-                  <div className="info-box-title">❗ Final Warning</div>
-                  <div className="info-box-text">
-                    You are about to withdraw {amount} X1SAFE to your wallet.
-                    <br />
-                    This will <strong>permanently remove</strong> your exit rights.
-                  </div>
+                <div className="info-box">
+                  <div className="info-box-title">Confirm: Convert {amount} PUT → X1SAFE</div>
                 </div>
-                
-                <button
-                  className="btn btn-secondary btn-full"
-                  onClick={handleWithdraw}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <span className="loading" />
-                      Withdrawing...
-                    </>
-                  ) : (
-                    'Confirm Withdrawal'
-                  )}
+                <button className="btn btn-secondary btn-full" onClick={handleWithdraw} disabled={loading}>
+                  {loading ? <><span className="loading" /> Converting...</> : 'Confirm'}
                 </button>
-                
-                <button
-                  className="btn btn-secondary btn-full"
-                  onClick={() => setShowConfirm(false)}
-                  disabled={loading}
-                >
-                  Cancel
-                </button>
+                <button className="btn btn-secondary btn-full" onClick={() => setShowConfirm(false)} disabled={loading}>Cancel</button>
+              </div>
+            )}
+
+            {txSig && (
+              <div className="tx-status success">
+                ✅ Converted to X1SAFE!{' '}
+                <a href={`${EXPLORER}/tx/${txSig}`} target="_blank" rel="noopener" style={{ color: 'var(--primary)' }}>
+                  View Tx ↗
+                </a>
               </div>
             )}
           </>
         ) : (
           <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-            <p>No X1SAFE balance found</p>
-            <p style={{ fontSize: '0.9rem', marginTop: '8px' }}>Deposit assets to receive X1SAFE</p>
+            <p>Connect wallet to withdraw</p>
           </div>
         )}
 
-        {txSig && (
-          <div className="tx-status success">
-            ✅ Withdrawal successful! Transaction: {txSig.slice(0, 20)}...
-            <br />
-            X1SAFE has been sent to your wallet.
-          </div>
-        )}
+        <div style={{ marginTop: '16px', fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          {IS_TESTNET ? '🔧 Testnet' : '🌐 Mainnet'}
+        </div>
       </div>
     </div>
   )

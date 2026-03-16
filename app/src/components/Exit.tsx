@@ -1,168 +1,180 @@
 import { useState, useEffect } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
-
-interface UserPosition {
-  deposit_value_usd: number
-  exit_rights: boolean
-  backing_asset: string
-  backing_amount: number
-}
+import { useConnection, useWallet, useAnchorWallet } from '@solana/wallet-adapter-react'
+import { AnchorProvider } from '@coral-xyz/anchor'
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } from '@solana/spl-token'
+import { Transaction } from '@solana/web3.js'
+import {
+  ASSETS, EXPLORER, IS_TESTNET,
+  getProgram, getPutMintPDA, getReservePDA,
+  getTokenBalance, toBaseUnits
+} from '../lib/vault'
 
 export function Exit() {
+  const { connection } = useConnection()
   const wallet = useWallet()
+  const anchorWallet = useAnchorWallet()
+
+  const [amount, setAmount] = useState('')
+  const [assetKey, setAssetKey] = useState('USDCX')
   const [loading, setLoading] = useState(false)
-  const [position, setPosition] = useState<UserPosition | null>(null)
   const [txSig, setTxSig] = useState('')
+  const [error, setError] = useState('')
+  const [putBalance, setPutBalance] = useState(0)
   const [showConfirm, setShowConfirm] = useState(false)
 
+  const putMint = getPutMintPDA()
+  const asset = ASSETS.find(a => a.key === assetKey)!
+
   useEffect(() => {
-    if (wallet.connected) {
-      setPosition({
-        deposit_value_usd: 5000,
-        exit_rights: true,
-        backing_asset: 'USDC.X',
-        backing_amount: 5000
-      })
-    }
-  }, [wallet.connected])
+    if (!wallet.publicKey) return
+    getTokenBalance(connection, wallet.publicKey, putMint).then(setPutBalance)
+  }, [wallet.publicKey, connection, txSig])
 
   const handleExit = async () => {
-    if (!wallet.publicKey || !position?.exit_rights) return
-    
+    if (!wallet.publicKey || !anchorWallet || !amount) return
     setLoading(true)
+    setError('')
+    setTxSig('')
+
     try {
-      await new Promise(r => setTimeout(r, 2000))
-      const mockSig = 'exit_' + Math.random().toString(36).substring(7)
-      setTxSig(mockSig)
-      setPosition(null)
-    } catch (error) {
-      console.error('Exit error:', error)
+      const provider = new AnchorProvider(connection, anchorWallet, { commitment: 'confirmed' })
+      const program = getProgram(provider)
+
+      const ownerPutAta   = await getAssociatedTokenAddress(putMint, wallet.publicKey)
+      const reserve       = getReservePDA(asset.mint)
+      const ownerAssetAta = await getAssociatedTokenAddress(asset.mint, wallet.publicKey)
+
+      // Pre-create ownerAssetAta if needed
+      try { await getAccount(connection, ownerAssetAta) } catch {
+        const preTx = new Transaction()
+        preTx.add(createAssociatedTokenAccountInstruction(wallet.publicKey, ownerAssetAta, wallet.publicKey, asset.mint))
+        preTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+        preTx.feePayer = wallet.publicKey
+        const signed = await wallet.signTransaction!(preTx)
+        await connection.sendRawTransaction(signed.serialize())
+        await new Promise(r => setTimeout(r, 2000))
+      }
+
+      const amountBN = toBaseUnits(parseFloat(amount), 6)
+      const tx = await program.methods
+        .exit(amountBN)
+        .accounts({
+          owner: wallet.publicKey,
+          assetMint: asset.mint,
+          ownerPutAta,
+          reserve,
+          ownerAssetAta,
+        })
+        .rpc()
+
+      setTxSig(tx)
+      setAmount('')
+      setShowConfirm(false)
+    } catch (e: any) {
+      setError(e?.message || 'Transaction failed')
     } finally {
       setLoading(false)
-      setShowConfirm(false)
     }
   }
 
   return (
     <div className="exit">
-      <style>{`
-        .exit { animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
-
       <div className="card">
         <div className="card-header">
           <div>
             <div className="card-title">Exit Position</div>
-            <div className="card-subtitle">Burn X1SAFE to reclaim your deposit</div>
+            <div className="card-subtitle">Burn X1SAFE_PUT → receive collateral back</div>
           </div>
         </div>
 
-        {position ? (
+        <div className="info-box danger">
+          <div className="info-box-title">❗ Exit = Redeem Collateral</div>
+          <div className="info-box-text">
+            Burn PUT tokens to get your original collateral back at current oracle price.
+            Select which asset you want to receive.
+          </div>
+        </div>
+
+        {wallet.connected ? (
           <>
-            <div className="info-box danger">
-              <div className="info-box-title">🔥 Warning</div>
-              <div className="info-box-text">
-                Exiting will <strong>permanently burn</strong> your X1SAFE tokens to <code>11111111111111111111111111111111</code>.
-                <br /><br />
-                This action cannot be undone. You will receive your original backing asset.
-              </div>
-            </div>
-
             <div className="position-card">
-              <div className="position-header">
-                <span className="position-title">Your Position</span>
-                <span className={`position-badge ${position.exit_rights ? 'active' : 'inactive'}`}>
-                  {position.exit_rights ? '✅ Exit Rights' : '❌ No Rights'}
-                </span>
-              </div>
-              
               <div className="position-row">
-                <span className="position-label">Deposit Value</span>
-                <span className="position-value">${position.deposit_value_usd.toLocaleString()}</span>
-              </div>
-              
-              <div className="position-row">
-                <span className="position-label">Backing Asset</span>
-                <span className="position-value">{position.backing_asset}</span>
-              </div>
-              
-              <div className="position-row">
-                <span className="position-label">Amount to Receive</span>
-                <span className="position-value">{position.backing_amount.toLocaleString()} {position.backing_asset}</span>
+                <span className="position-label">X1SAFE_PUT Balance</span>
+                <span className="position-value">{putBalance.toFixed(4)} PUT</span>
               </div>
             </div>
 
-            {position.exit_rights ? (
-              <>
-                {!showConfirm ? (
-                  <button
-                    className="btn btn-danger btn-full"
-                    onClick={() => setShowConfirm(true)}
-                  >
-                    🔥 Exit Position
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div className="info-box warning">
-                      <div className="info-box-title">⚠️ Confirm Exit</div>
-                      <div className="info-box-text">
-                        You are about to burn {position.deposit_value_usd} X1SAFE tokens permanently.
-                        <br />
-                        You will receive {position.backing_amount} {position.backing_asset}.
-                      </div>
-                    </div>
-                    
-                    <button
-                      className="btn btn-danger btn-full"
-                      onClick={handleExit}
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <>
-                          <span className="loading" />
-                          Processing...
-                        </>
-                      ) : (
-                        'Confirm Exit'
-                      )}
-                    </button>
-                    
-                    <button
-                      className="btn btn-secondary btn-full"
-                      onClick={() => setShowConfirm(false)}
-                      disabled={loading}
-                    >
-                      Cancel
-                    </button>
+            <div className="form-group">
+              <label className="form-label">Receive Asset</label>
+              <div className="asset-grid">
+                {ASSETS.map(a => (
+                  <div key={a.key} className={`asset-option ${assetKey === a.key ? 'selected' : ''}`} onClick={() => setAssetKey(a.key)}>
+                    <div className="asset-icon">{a.icon}</div>
+                    <div className="asset-name">{a.label}</div>
                   </div>
-                )}
-              </>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Amount to Exit (PUT)</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="number"
+                  className="form-input"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  max={putBalance}
+                />
+                <button
+                  style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.85rem' }}
+                  onClick={() => setAmount(putBalance.toFixed(6))}
+                >MAX</button>
+              </div>
+            </div>
+
+            {error && <div className="tx-status error">❌ {error}</div>}
+
+            {!showConfirm ? (
+              <button
+                className="btn btn-primary btn-full"
+                style={{ background: 'var(--danger, #dc2626)' }}
+                onClick={() => setShowConfirm(true)}
+                disabled={!amount || parseFloat(amount) <= 0 || parseFloat(amount) > putBalance}
+              >
+                Exit Position
+              </button>
             ) : (
-              <div className="info-box warning">
-                <div className="info-box-title">❌ No Exit Rights</div>
-                <div className="info-box-text">
-                  You have already withdrawn your X1SAFE to your wallet and lost exit rights.
-                  <br /><br />
-                  You can still sell your X1SAFE on xDEX.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="info-box danger">
+                  <div className="info-box-title">Exit {amount} PUT for {asset.label}?</div>
                 </div>
+                <button className="btn btn-primary btn-full" style={{ background: 'var(--danger, #dc2626)' }} onClick={handleExit} disabled={loading}>
+                  {loading ? <><span className="loading" /> Exiting...</> : 'Confirm Exit'}
+                </button>
+                <button className="btn btn-secondary btn-full" onClick={() => setShowConfirm(false)} disabled={loading}>Cancel</button>
+              </div>
+            )}
+
+            {txSig && (
+              <div className="tx-status success">
+                ✅ Exit successful!{' '}
+                <a href={`${EXPLORER}/tx/${txSig}`} target="_blank" rel="noopener" style={{ color: 'var(--primary)' }}>
+                  View Tx ↗
+                </a>
               </div>
             )}
           </>
         ) : (
           <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-            <p>No active position found</p>
-            <p style={{ fontSize: '0.9rem', marginTop: '8px' }}>Deposit assets to create a position</p>
+            <p>Connect wallet to exit</p>
           </div>
         )}
 
-        {txSig && (
-          <div className="tx-status success">
-            ✅ Exit successful! Transaction: {txSig.slice(0, 20)}...
-            <br />
-            Your {position?.backing_asset || 'assets'} have been returned.
-          </div>
-        )}
+        <div style={{ marginTop: '16px', fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          {IS_TESTNET ? '🔧 Testnet' : '🌐 Mainnet'}
+        </div>
       </div>
     </div>
   )

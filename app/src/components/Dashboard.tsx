@@ -1,211 +1,106 @@
 import { useState, useEffect } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
-
-interface Stats {
-  tvl: number
-  holders: number
-  price: number
-  volume24h: number
-}
-
-interface UserPosition {
-  x1safeBalance: number
-  depositValue: number
-  exitRights: boolean
-  backingAsset: string
-}
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
+import { fetchVaultState, getTokenBalance, getPutMintPDA, getSafeMintPDA, EXPLORER, IS_TESTNET, PROGRAM_ID } from '../lib/vault'
 
 export function Dashboard() {
+  const { connection } = useConnection()
   const wallet = useWallet()
-  const [stats, setStats] = useState<Stats>({
-    tvl: 0,
-    holders: 0,
-    price: 1.0,
-    volume24h: 0
-  })
-  const [position, setPosition] = useState<UserPosition | null>(null)
+
+  const [vaultState, setVaultState] = useState<any>(null)
+  const [putBal, setPutBal] = useState(0)
+  const [safeBal, setSafeBal] = useState(0)
   const [loading, setLoading] = useState(true)
 
+  const putMint  = getPutMintPDA()
+  const safeMint = getSafeMintPDA()
+
   useEffect(() => {
-    // Mock data - in production fetch from program
-    setTimeout(() => {
-      setStats({
-        tvl: 1247500,
-        holders: 342,
-        price: 1.0,
-        volume24h: 125000
-      })
+    const load = async () => {
+      setLoading(true)
+      const state = await fetchVaultState(connection)
+      setVaultState(state)
+      if (wallet.publicKey) {
+        const [p, s] = await Promise.all([
+          getTokenBalance(connection, wallet.publicKey, putMint),
+          getTokenBalance(connection, wallet.publicKey, safeMint),
+        ])
+        setPutBal(p)
+        setSafeBal(s)
+      }
       setLoading(false)
-    }, 1000)
+    }
+    load()
+    const interval = setInterval(load, 15000)
+    return () => clearInterval(interval)
+  }, [wallet.publicKey, connection])
 
-    if (wallet.connected) {
-      // Mock user position
-      setPosition({
-        x1safeBalance: 5000,
-        depositValue: 5000,
-        exitRights: true,
-        backingAsset: 'USDC.X'
-      })
-    }
-  }, [wallet.connected])
-
-  const formatNumber = (num: number) => {
-    if (num >= 1_000_000) {
-      return `$${(num / 1_000_000).toFixed(2)}M`
-    }
-    if (num >= 1_000) {
-      return `$${(num / 1_000).toFixed(1)}K`
-    }
-    return `$${num.toFixed(2)}`
-  }
+  const tvl = vaultState ? (vaultState.totalSupply / 1e6).toFixed(2) : '—'
 
   return (
     <div className="dashboard">
-      <style>{`
-        .dashboard { animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
-      
-      {/* Stats Grid */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-label">Total Value Locked</div>
-          <div className="stat-value">{loading ? '...' : formatNumber(stats.tvl)}</div>
-          <div className="stat-change positive">+12.5% this week</div>
-        </div>
-        
-        <div className="stat-card">
-          <div className="stat-label">X1SAFE Price</div>
-          <div className="stat-value">${stats.price.toFixed(3)}</div>
-          <div className="stat-change">Pegged to USD</div>
-        </div>
-        
-        <div className="stat-card">
-          <div className="stat-label">24h Volume</div>
-          <div className="stat-value">{loading ? '...' : formatNumber(stats.volume24h)}</div>
-          <div className="stat-change positive">+8.2%</div>
-        </div>
-        
-        <div className="stat-card">
-          <div className="stat-label">Holders</div>
-          <div className="stat-value">{loading ? '...' : stats.holders.toLocaleString()}</div>
-          <div className="stat-change positive">+18 new today</div>
-        </div>
-      </div>
-
-      <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-        {/* Your Position */}
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-title">Your Position</div>
-              <div className="card-subtitle">{wallet.connected ? 'Connected' : 'Connect wallet to view'}</div>
-            </div>
-          </div>
-          
-          {wallet.connected ? (
-            position ? (
-              <div className="position-card">
-                <div className="position-header">
-                  <span className="position-title">Active Position</span>
-                  <span className={`position-badge ${position.exitRights ? 'active' : 'inactive'}`}>
-                    {position.exitRights ? '✅ Exit Rights' : '❌ No Rights'}
-                  </span>
-                </div>
-                
-                <div className="position-row">
-                  <span className="position-label">X1SAFE Balance</span>
-                  <span className="position-value">{position.x1safeBalance.toLocaleString()} X1SAFE</span>
-                </div>
-                
-                <div className="position-row">
-                  <span className="position-label">Deposit Value</span>
-                  <span className="position-value">${position.depositValue.toLocaleString()}</span>
-                </div>
-                
-                <div className="position-row">
-                  <span className="position-label">Backing Asset</span>
-                  <span className="position-value">{position.backingAsset}</span>
-                </div>
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-                <p>No active position</p>
-                <p style={{ fontSize: '0.9rem', marginTop: '8px' }}>Deposit assets to get started</p>
-              </div>
-            )
-          ) : (
-            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-              <p>Connect your wallet to view your position</p>
-            </div>
-          )}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Quick Actions</div>
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <a href="#deposit" className="external-link">
-              💰 Deposit Assets
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M7 17L17 7M17 7H7M17 7V17" />
-              </svg>
-            </a>
-            
-            <a href="https://app.xdex.xyz/swap" target="_blank" rel="noopener" className="external-link">
-              📈 Trade on xDEX
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M7 17L17 7M17 7H7M17 7V17" />
-              </svg>
-            </a>
-            
-            <a href="https://explorer.mainnet.x1.xyz" target="_blank" rel="noopener" className="external-link">
-              🔍 View on Explorer
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M7 17L17 7M17 7H7M17 7V17" />
-              </svg>
-            </a>
-          </div>        
-        </div>
-      </div>
-
-      {/* How It Works */}
       <div className="card">
         <div className="card-header">
-          <div className="card-title">How X1SAFU Works</div>
-        </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
-          <div className="info-box">
-            <div className="info-box-title">
-              <span>1️⃣</span> Deposit
-            </div>
-            <div className="info-box-text">
-              Send USDC.X, XEN, XNT, or XNM to receive X1SAFE tokens at 1:1 USD value.
-            </div>
-          </div>
-          
-          <div className="info-box">
-            <div className="info-box-title">
-              <span>2️⃣</span> Hold or Sell
-            </div>
-            <div className="info-box-text">
-              Keep X1SAFE for exit rights, or sell on xDEX secondary market.
-            </div>
-          </div>
-          
-          <div className="info-box">
-            <div className="info-box-title">
-              <span>3️⃣</span> Exit
-            </div>
-            <div className="info-box-text">
-              Burn X1SAFE to reclaim your original deposit principal.
-            </div>
+          <div>
+            <div className="card-title">X1SAFE Protocol Dashboard</div>
+            <div className="card-subtitle">{IS_TESTNET ? '🔧 Testnet' : '🌐 Mainnet'} · Live on-chain data</div>
           </div>
         </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+            <span className="loading" /> Loading vault state...
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              <div className="position-card">
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Total X1SAFE Supply</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--primary)' }}>{tvl}</div>
+              </div>
+              <div className="position-card">
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Assets Registered</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{vaultState?.assetCount ?? '—'}</div>
+              </div>
+              <div className="position-card">
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Status</div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: vaultState?.paused ? '#ef4444' : '#22c55e' }}>
+                  {vaultState ? (vaultState.paused ? '⏸ Paused' : '✅ Active') : '❌ Not found'}
+                </div>
+              </div>
+            </div>
+
+            {wallet.connected && (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: '12px', fontSize: '0.95rem' }}>Your Position</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div className="position-card">
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>X1SAFE_PUT (locked)</div>
+                    <div style={{ fontSize: '1.3rem', fontWeight: 700 }}>{putBal.toFixed(4)}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Deposit receipt tokens</div>
+                  </div>
+                  <div className="position-card">
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>X1SAFE (free)</div>
+                    <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--primary)' }}>{safeBal.toFixed(4)}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Tradeable tokens</div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: '8px', padding: '12px', background: 'var(--surface, #1e1e2e)', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <div style={{ marginBottom: '4px' }}>
+                <strong>Program:</strong>{' '}
+                <a href={`${EXPLORER}/address/${PROGRAM_ID.toBase58()}`} target="_blank" rel="noopener" style={{ color: 'var(--primary)', fontFamily: 'monospace' }}>
+                  {PROGRAM_ID.toBase58().slice(0,16)}...
+                </a>
+              </div>
+              <div>
+                <strong>Vault PDA:</strong>{' '}
+                <span style={{ fontFamily: 'monospace' }}>8Hz12R5yr5xuckww3ycwnranH7Fbwpp7uN1aNbEekoFC</span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
