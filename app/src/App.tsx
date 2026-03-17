@@ -25,12 +25,17 @@ declare global {
 
 type Tab = 'connect' | 'dashboard' | 'deposit' | 'withdraw' | 'exit'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'connect',   label: 'Connect'   },
-  { key: 'dashboard', label: 'Overview'  },
-  { key: 'deposit',   label: 'Deposit'   },
-  { key: 'withdraw',  label: 'Withdraw'  },
-  { key: 'exit',      label: 'Exit'      },
+const ACTIONS: { key: Tab; label: string; icon: string; sub: string }[] = [
+  { key: 'deposit',   label: 'Deposit',   icon: '⬇️',  sub: 'Collateral → PUT' },
+  { key: 'withdraw',  label: 'Withdraw',  icon: '🔄',  sub: 'PUT → X1SAFE'     },
+  { key: 'exit',      label: 'Exit',      icon: '↩️',  sub: 'Burn X1SAFE'      },
+  { key: 'dashboard', label: 'Overview',  icon: '📊',  sub: 'Vault stats'      },
+]
+
+const NAV1: { key: Tab; label: string; icon: string }[] = [
+  { key: 'connect',   label: 'Home',  icon: '🏠' },
+  { key: 'dashboard', label: 'Vault', icon: '🔒' },
+  { key: 'deposit',   label: 'Info',  icon: 'ℹ️'  },
 ]
 
 function App() {
@@ -42,46 +47,84 @@ function App() {
   const [tab, setTab] = useState<Tab>('connect')
 
   const shortAddr = publicKey
-    ? `${publicKey.toBase58().slice(0, 4)}…${publicKey.toBase58().slice(-4)}`
+    ? `${publicKey.toBase58().slice(0,4)}…${publicKey.toBase58().slice(-4)}`
     : null
 
   return (
     <div className="app-shell">
-      {/* ── Header ── */}
+      {/* Status bar */}
+      <div className="status-bar">
+        <span>▶</span>
+        <span>RPC: {RPC_URL.replace('https://', '')}</span>
+      </div>
+
+      {/* Header */}
       <header className="app-header">
         <div className="header-inner">
           <div className="brand">
-            {/* Simple shield SVG instead of lucide dep */}
             <div className="brand-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: '#00d4ff' }}>
+                <path d="M12 2L4 6v6c0 5.5 3.8 10.7 8 12 4.2-1.3 8-6.5 8-12V6l-8-4z"/>
               </svg>
             </div>
             <div>
-              <div className="brand-name">X1SAFE</div>
-              <div className="brand-sub">Multi-Asset Vault</div>
+              <div className="brand-name">X1SAFE <span>Vault</span></div>
             </div>
           </div>
-          {isConnected && shortAddr && (
-            <span className="badge badge-green mono">{shortAddr}</span>
+
+          {isConnected && shortAddr ? (
+            <div className="wallet-indicator">
+              <span style={{ color: '#22c55e', fontSize: '0.6rem' }}>●</span>
+              {shortAddr}
+            </div>
+          ) : (
+            <button className="btn-connect" onClick={() => setTab('connect')}>
+              <span>🔗</span> Connect
+            </button>
           )}
+
+          <div className="btn-menu">
+            <span /><span /><span />
+          </div>
         </div>
       </header>
 
-      {/* ── Tab Nav ── */}
-      <nav className="tab-nav">
-        {TABS.map(t => (
+      {/* Action selector */}
+      <div className="action-selector">
+        {ACTIONS.map(a => (
           <button
-            key={t.key}
-            className={`tab-btn${tab === t.key ? ' active' : ''}`}
-            onClick={() => setTab(t.key)}
+            key={a.key}
+            className={`action-card${tab === a.key ? ' active' : ''}`}
+            onClick={() => setTab(a.key)}
           >
-            {t.label}
+            <span className="action-icon">{a.icon}</span>
+            <span className="action-label">{a.label}</span>
+            <span className="action-sub">{a.sub}</span>
           </button>
         ))}
-      </nav>
+      </div>
 
-      {/* ── Content ── */}
+      {/* Metrics bar */}
+      <div className="metrics-grid">
+        <div className="metric-card">
+          <div className="metric-label">Total Locked</div>
+          <div className="metric-value accent">—</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">X1SAFE Rate</div>
+          <div className="metric-value">$0.01</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Your Position</div>
+          <div className="metric-value">{isConnected ? '—' : <span style={{ color: 'var(--text-3)' }}>—</span>}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Network</div>
+          <div className="metric-value" style={{ fontSize: '0.85rem' }}>X1 Testnet</div>
+        </div>
+      </div>
+
+      {/* Main content */}
       <main className="app-main">
         {tab === 'connect'   && <Connect />}
         {tab === 'dashboard' && <Dashboard />}
@@ -89,6 +132,37 @@ function App() {
         {tab === 'withdraw'  && <Withdraw />}
         {tab === 'exit'      && <Exit />}
       </main>
+
+      {/* Bottom nav */}
+      <nav className="bottom-nav">
+        <div className="nav-row">
+          {NAV1.map(n => (
+            <button
+              key={n.key}
+              className={`nav-item${tab === n.key ? ' active' : ''}`}
+              onClick={() => setTab(n.key)}
+            >
+              <span className="nav-icon">{n.icon}</span>
+              <span className="nav-label">{n.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="nav-divider" />
+        <div className="nav-row">
+          <button className="nav-item" onClick={() => setTab('dashboard')}>
+            <span className="nav-icon">📈</span>
+            <span className="nav-label">Portfolio</span>
+          </button>
+          <button className="nav-item" onClick={() => setTab('withdraw')}>
+            <span className="nav-icon">💱</span>
+            <span className="nav-label">Swap</span>
+          </button>
+          <button className="nav-item active" onClick={() => setTab('deposit')}>
+            <span className="nav-icon">🌐</span>
+            <span className="nav-label">Explore</span>
+          </button>
+        </div>
+      </nav>
     </div>
   )
 }
